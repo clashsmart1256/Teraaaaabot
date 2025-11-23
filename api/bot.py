@@ -5,92 +5,110 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from urllib.parse import quote
 
+# Apna Bot Token Daal
 TOKEN = "5793553240:AAGMn6pkK8SZurzXDuKsf-yygd43V8bt2fI"
+
 app = FastAPI()
 bot_app = Application.builder().token(TOKEN).build()
 
+# User → ndus cookie string
+user_cookies = {}
 user_links = {}
-user_cookies = {}  # user_id → parsed cookie dict
 
 def format_size(size: int) -> str:
-    for unit in ["B", "KB", "MB", "GB"]:
+    for unit in ["B", "KB", "MB", "GB", "TB"]:
         if size < 1024:
-            return f"{size:.1f} {unit}"
+            return f"{size:.2f} {unit}"
         size /= 1024
-    return f"{size:.1f} TB"
+    return f"{size:.2f} PB"
 
-def parse_cookies_txt(txt: str) -> dict:
-    cookies = {}
-    for line in txt.splitlines():
-        if line.startswith("#") or not line.strip() or "\t" not in line:
-            continue
-        parts = line.split("\t")
-        if len(parts) >= 7:
-            name = parts[-2]
-            value = parts[-1]
-            cookies[name] = value
-    return cookies
-
-async def get_direct_link(link: str, cookies: dict):
+async def get_direct_link(link: str, ndus_cookie: str):
     try:
         code = re.search(r"/s/([a-zA-Z0-9_-]+)", link).group(1)
-        cookie_str = "; ".join(f"{k}={v}" for k, v in cookies.items())
+
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Referer": "https://www.1024terabox.com/",
-            "Cookie": cookie_str
+            "Referer": "https://www.terabox.com/",
+            "Cookie": ndus_cookie,                     # Sirf ndus= chahiye!
+            "Accept": "application/json, text/plain, */*"
         }
 
         async with httpx.AsyncClient(headers=headers, timeout=60) as client:
             # Step 1: Share list
-            r1 = await client.get(f"https://www.1024terabox.com/share/list?app_id=250528&shorturl={code}&root=1")
+            r1 = await client.get(f"https://www.terabox.com/share/list?app_id=250528&shorturl={code}&pwd=&root=1")
             data = r1.json()
+
             if data.get("errno") != 0:
-                return None, f"Cookie expired! errno: {data.get('errno', '???')}\nFresh cookies.txt upload kar."
+                return None, f"Cookie expired ya invalid! errno: {data.get('errno')}\nNaya ndus= daal."
 
             file = data["list"][0]
 
-            # Step 2: Download link
+            # Step 2: Download API (nolimit = bade files ke liye magic)
             payload = {
                 "shareid": data["shareid"],
                 "uk": data["uk"],
                 "primaryid": data["shareid"],
-                "fid_list": [file["fs_id"]]
+                "fid_list": [file["fs_id"]],
+                "type": "nolimit",        # YE LINE BADE FILES KE LIYE ZAROORI HAI
+                "product": "share"
             }
-            r2 = await client.post("https://www.1024terabox.com/api/download", json=payload)
+
+            r2 = await client.post("https://www.terabox.com/api/download", json=payload)
             res = r2.json()
+
             if res.get("errno") != 0:
-                return None, f"Download failed! errno: {res.get('errno')}"
+                return None, f"Download link nahi mila! errno: {res.get('errno')}"
 
             dlink = res["dlink"][0]["dlink"]
             name = file["server_filename"]
             size = int(file["size"])
             thumb = file.get("thumbs", {}).get("url3", "")
-            proxy = f"https://teraaaaabot.vercel.app/proxy?url={quote(dlink)}&name={quote(name)}"
 
-            return {"name": name, "size": size, "dlink": dlink, "thumb": thumb, "proxy": proxy}, None
+            proxy_url = f"https://teraaaaabot.vercel.app/proxy?url={quote(dlink)}&name={quote(name)}"
+
+            return {
+                "name": name,
+                "size": size,
+                "dlink": dlink,
+                "thumb": thumb,
+                "proxy": proxy_url
+            }, None
 
     except Exception as e:
         return None, f"Error: {str(e)}"
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "TeraBox Downloader Bot LIVE!\n\n"
-        "1. cookies.txt upload kar (Netscape format)\n"
-        "2. Link bhejo → direct + proxy milega full speed!"
+        "TeraBox Downloader Bot LIVE (200GB+ Full Speed)\n\n"
+        "1. Sirf ndus= cookie paste kar → terabox.com login > F12 > Application > Cookies > ndus= copy\n"
+        "2. TeraBox link bhejo → direct + proxy milega!\n\n"
+        "Ek baar ndus= daala → 30-60 din chalega!"
     )
 
-async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text.strip()
 
-    if re.search(r"terabox\.com/s/|1024terabox\.com/s/", text):
+    # Cookie detect (sirf ndus=)
+    if text.startswith("ndus="):
+        user_cookies[user_id] = text.strip()
+        await update.message.reply_text("Cookie save ho gaya! Ab link daal bhai")
+        # Agar pehle link bheja tha to process kar
+        if user_id in user_links:
+            link = user_links.pop(user_id)
+            update.message.text = link
+            await handle_message(update, context)
+        return
+
+    # Link detect
+    if re.search(r"terabox\.com/s/|1024terabox\.com/s/|teraboxapp\.com/s/", text):
         if user_id not in user_cookies:
             user_links[user_id] = text
-            await update.message.reply_text("Link save kiya!\nAb cookies.txt upload kar do (document)")
+            await update.message.reply_text("Link save kiya!\nAb sirf ndus= cookie paste kar")
             return
 
         msg = await update.message.reply_text("Processing link...")
+
         info, err = await get_direct_link(text, user_cookies[user_id])
         if err:
             await msg.edit_text(err)
@@ -98,39 +116,23 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("Direct Link", url=info["dlink"])],
-            [InlineKeyboardButton("Proxy Full Speed", url=info["proxy"])]
+            [InlineKeyboardButton("Proxy (Full Speed + Resume)", url=info["proxy"])]
         ])
-        caption = f"**{info['name']}**\nSize: `{format_size(info['size'])}`\n\nDownload shuru kar bhai!"
+
+        caption = f"**{info['name']}**\nSize: `{format_size(info['size'])}`\n\nDownload shuru kar do bhai!"
 
         if info["thumb"]:
             await msg.delete()
             await update.message.reply_photo(info["thumb"], caption=caption, reply_markup=keyboard, parse_mode="Markdown")
         else:
             await msg.edit_text(caption, reply_markup=keyboard, parse_mode="Markdown")
+        return
 
-async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    doc = update.message.document
-    if doc.file_name and doc.file_name.endswith(".txt"):
-        file = await doc.get_file()
-        content = await file.download_as_bytearray()
-        txt = content.decode("utf-8", errors="ignore")
-        parsed = parse_cookies_txt(txt)
-        if "ndus" not in parsed:
-            await update.message.reply_text("Invalid cookies.txt! ndus missing hai")
-            return
-        user_cookies[user_id] = parsed
-        await update.message.reply_text("Cookies save ho gaya! Ab link daal")
-        # Process saved link
-        if user_id in user_links:
-            link = user_links.pop(user_id)
-            fake_update = Update(update_id=0, message=update.message.copy_update({"text": link}))
-            await handle_text(fake_update, context)
+    await update.message.reply_text("Sirf ndus= cookie paste kar ya TeraBox link bhejo!")
 
 # Handlers
 bot_app.add_handler(CommandHandler("start", start))
-bot_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-bot_app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
+bot_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
 @app.on_event("startup")
 async def startup():
@@ -140,7 +142,7 @@ async def startup():
         listen="0.0.0.0",
         port=8000,
         url_path=TOKEN,
-        webhook_url=f"https://teraaaaabot.vercel.app/{TOKEN}"
+        webhook_url=f"https://teraaaaabot.vercel.app/{TOKEN}"  # Apna domain daal
     )
 
 @app.post(f"/{TOKEN}")
@@ -150,9 +152,9 @@ async def webhook(request: Request):
     return Response(status_code=200)
 
 @app.get("/proxy")
-async def proxy(url: str, name: str = "download"):
+async def proxy(url: str, name: str = "download.mp4"):
     async with httpx.AsyncClient(follow_redirects=True, timeout=None) as client:
-        r = await client.get(url)
+        r = await client.get(url, headers={"User-Agent": "Mozilla/5.0"})
         return Response(
             content=r.content,
             media_type="application/octet-stream",
@@ -161,4 +163,4 @@ async def proxy(url: str, name: str = "download"):
 
 @app.get("/")
 async def home():
-    return {"status": "TeraBox Bot 100% LIVE – Vercel Ready – No requests!"}
+    return {"status": "TeraBox Bot 100% LIVE – Sirf ndus= cookie – 200GB+ Full Speed!"}
