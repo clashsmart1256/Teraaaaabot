@@ -4,13 +4,18 @@ from fastapi import FastAPI, Request, Response
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
-# ←←← APNA TOKEN YAHAN DAAL DO
 TOKEN = "5793553240:AAGMn6pkK8SZurzXDuKsf-yygd43V8bt2fI"
 
 app = FastAPI()
 bot_app = Application.builder().token(TOKEN).build()
 
-links = {}  # user_id → link
+# ←←← YE LINE ADD KI HAI — Vercel ke liye zaroori hai!
+async def init_bot():
+    if not bot_app.running:
+        await bot_app.initialize()
+        await bot_app.start()
+
+links = {}
 
 def format_size(size):
     for unit in ["B", "KB", "MB", "GB"]:
@@ -19,35 +24,29 @@ def format_size(size):
     return f"{size:.1f} TB"
 
 async def get_direct_link(link: str, cookie: str):
-    if not cookie.startswith("ndus="):
-        cookie = "ndus=" + cookie.strip()
+    if not cookie.startswith("ndus="): cookie = "ndus=" + cookie.strip()
     m = re.search(r"/s/([a-zA-Z0-9_-]+)", link)
     if not m: return None, "Invalid link"
     try:
-        async with httpx.AsyncClient() as client:
-            r = await client.post(
-                "https://www.1024terabox.com/share/list",
-                data={"shorturl": m.group(1)},
-                headers={"Cookie": cookie}
-            )
+        async with httpx.AsyncClient(timeout=30) as client:
+            r = await client.post("https://www.1024terabox.com/share/list",
+                                data={"shorturl": m.group(1)},
+                                headers={"Cookie": cookie})
             data = r.json()
-            if data.get("errno") != 0: return None, "Cookie galat ya expired"
+            if data.get("errno") != 0: return None, "Cookie expired"
             file = data["list"][0]
-            dlink = file["dlink"]
-            proxy = f"https://teraaaaabot.vercel.app/proxy?url={dlink}&name={file['server_filename']}"
+            proxy = f"https://teraaaaabot.vercel.app/proxy?url={file['dlink']}&name={file['server_filename']}"
             return {
                 "name": file["server_filename"],
                 "size": format_size(int(file["size"])),
                 "thumb": file.get("thumbs", {}).get("url3", ""),
-                "direct": dlink,
+                "direct": file["dlink"],
                 "proxy": proxy
             }, None
-    except:
-        return None, "Network error"
+    except: return None, "Network error"
 
-# Handlers
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("TeraBox Bot LIVE on Vercel\nLink bhejo → ndus cookie bhejo → download ready!")
+    await update.message.reply_text("TeraBox Bot LIVE on Vercel\nLink bhejo → ndus cookie bhejo → done!")
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -60,6 +59,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if user_id in links:
         link = links.pop(user_id)
+        await init_bot()                      # ←←← initialize on first message
         msg = await update.message.reply_text("Processing…")
         info, err = await get_direct_link(link, text)
         if err:
@@ -67,7 +67,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("Direct Link", url=info["direct"])],
-            [InlineKeyboardButton("Proxy (Recommended)", url=info["proxy"])]
+            [InlineKeyboardButton("Proxy (Best)", url=info["proxy"])]
         ])
         caption = f"**{info['name']}**\nSize: `{info['size']}`"
         if info["thumb"]:
@@ -76,11 +76,13 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await msg.edit_text(caption, reply_markup=keyboard, parse_mode="Markdown")
 
+# Handlers
 bot_app.add_handler(CommandHandler("start", start))
 bot_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
 @app.post("/webhook")
 async def webhook(request: Request):
+    await init_bot()                       # ←←← har request pe safe init
     update = Update.de_json(await request.json(), bot_app.bot)
     await bot_app.process_update(update)
     return Response(status_code=200)
@@ -89,12 +91,9 @@ async def webhook(request: Request):
 async def proxy(url: str, name: str = "file"):
     async with httpx.AsyncClient(follow_redirects=True, timeout=None) as client:
         r = await client.get(url)
-        return Response(
-            content=r.content,
-            media_type="application/octet-stream",
-            headers={"Content-Disposition": f'attachment; filename="{name}"'}
-        )
+        return Response(content=r.content, media_type="application/octet-stream",
+                        headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 @app.get("/")
 async def home():
-    return {"message": "Bot is running!"}
+    return {"message": "Bot running!"}
