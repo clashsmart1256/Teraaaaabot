@@ -1,3 +1,4 @@
-
-httpx
+fastapi
+uvicorn[standard]
 python-telegram-bot[webhooks]==20.8
+httpx
