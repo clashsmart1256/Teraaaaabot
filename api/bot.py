@@ -9,13 +9,14 @@ TOKEN = "5793553240:AAGMn6pkK8SZurzXDuKsf-yygd43V8bt2fI"
 app = FastAPI()
 bot_app = Application.builder().token(TOKEN).build()
 
-# User cookies, in-memory (restart pe reset ho jayega)
+# In-memory user storage (reset on restart)
 user_cookies = {}  # user_id → ndus cookie
 user_links = {}    # user_id → last shared link
 
 def format_size(size):
     for unit in ["B", "KB", "MB", "GB"]:
-        if size < 1024: return f"{size:.1f} {unit}"
+        if size < 1024:
+            return f"{size:.1f} {unit}"
         size /= 1024
     return f"{size:.1f} GB"
 
@@ -71,16 +72,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if "terabox.com/s/" in text or "1024terabox.com/s/" in text or "teraboxshare.com/s/" in text:
         user_links[user_id] = text
-        await update.message.reply_text("Link saved!
+        await update.message.reply_text(
+            "Link saved!
 
-Pehli baar ndus= cookie bhejo (ek baar daal, save ho jayega):
-• terabox.com login → F12 → Application → Cookies → ndus copy")
+"
+            "Pehli baar ndus= cookie bhejo (ek baar daal, save ho jayega):
+"
+            "• terabox.com login → F12 → Application → Cookies → ndus copy"
+        )
         return
 
     if user_id in user_links:
         link = user_links[user_id]
         cookie = text
-        # Save cookie for this user
         user_cookies[user_id] = cookie
         msg = await update.message.reply_text("Cookie saved! Ab se automatic chalega… Processing link")
         info, err = await get_direct_link(link, cookie)
@@ -105,7 +109,7 @@ Download ready! (Cookie saved for future)"
             await update.message.reply_photo(thumb, caption=caption, reply_markup=keyboard, parse_mode="Markdown")
         else:
             await msg.edit_text(caption, reply_markup=keyboard, parse_mode="Markdown")
-        del user_links[user_id]  # Clean up
+        del user_links[user_id]
         return
 
     await update.message.reply_text("Pehle link bhejo, phir cookie")
