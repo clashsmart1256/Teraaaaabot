@@ -9,8 +9,9 @@ TOKEN = "5793553240:AAGMn6pkK8SZurzXDuKsf-yygd43V8bt2fI"
 app = FastAPI()
 bot_app = Application.builder().token(TOKEN).build()
 
-# User cookies save karne ke liye (in-memory, restart pe reset)
+# User cookies, in-memory (restart pe reset ho jayega)
 user_cookies = {}  # user_id → ndus cookie
+user_links = {}    # user_id → last shared link
 
 def format_size(size):
     for unit in ["B", "KB", "MB", "GB"]:
@@ -53,9 +54,14 @@ async def get_direct_link(link: str, cookie=None):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "TeraBox Bot LIVE (Cookie Save Mode)\n\n"
-        "Link bhejo → pehli baar cookie maangega (ek baar daal, hamesha kaam)\n"
-        "Aage se automatic!\n\n"
+        "TeraBox Bot LIVE (Cookie Save Mode)
+
+"
+        "Link bhejo → pehli baar cookie maangega (ek baar daal, hamesha kaam)
+"
+        "Aage se automatic!
+
+"
         "Cookie kaise nikale: terabox.com login → F12 → Application → Cookies → ndus copy"
     )
 
@@ -65,7 +71,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if "terabox.com/s/" in text or "1024terabox.com/s/" in text or "teraboxshare.com/s/" in text:
         user_links[user_id] = text
-        await update.message.reply_text("Link saved!\n\nPehli baar ndus= cookie bhejo (ek baar daal, save ho jayega):\n• terabox.com login → F12 → Application → Cookies → ndus copy")
+        await update.message.reply_text("Link saved!
+
+Pehli baar ndus= cookie bhejo (ek baar daal, save ho jayega):
+• terabox.com login → F12 → Application → Cookies → ndus copy")
         return
 
     if user_id in user_links:
@@ -87,7 +96,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("Direct Link", url=dlink)],
             [InlineKeyboardButton("Proxy (Full Speed)", url=proxy)]
         ])
-        caption = f"**{name}**\nSize: `{size_str}`\n\nDownload ready! (Cookie saved for future)"
+        caption = f"**{name}**
+Size: `{size_str}`
+
+Download ready! (Cookie saved for future)"
         if thumb:
             await msg.delete()
             await update.message.reply_photo(thumb, caption=caption, reply_markup=keyboard, parse_mode="Markdown")
