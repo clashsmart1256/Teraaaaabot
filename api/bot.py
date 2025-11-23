@@ -10,7 +10,7 @@ app = FastAPI()
 bot_app = Application.builder().token(TOKEN).build()
 
 user_links = {}
-user_cookies = {}  # user_id → cookies dict (from txt)
+user_cookies = {}  # user_id → parsed cookie dict
 
 def format_size(size: int) -> str:
     for unit in ["B", "KB", "MB", "GB"]:
@@ -22,31 +22,35 @@ def format_size(size: int) -> str:
 def parse_cookies_txt(txt: str) -> dict:
     cookies = {}
     for line in txt.splitlines():
-        if line.startswith("#") or not line.strip():
+        if line.startswith("#") or not line.strip() or "\t" not in line:
             continue
         parts = line.split("\t")
         if len(parts) >= 7:
-            name, value = parts[-2], parts[-1]
+            name = parts[-2]
+            value = parts[-1]
             cookies[name] = value
     return cookies
 
 async def get_direct_link(link: str, cookies: dict):
     try:
         code = re.search(r"/s/([a-zA-Z0-9_-]+)", link).group(1)
+        cookie_str = "; ".join(f"{k}={v}" for k, v in cookies.items())
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
             "Referer": "https://www.1024terabox.com/",
-            "Cookie": "; ".join(f"{k}={v}" for k, v in cookies.items())
+            "Cookie": cookie_str
         }
 
-        async with httpx.AsyncClient(headers=headers, timeout=60, follow_redirects=True) as client:
-            # Share list
+        async with httpx.AsyncClient(headers=headers, timeout=60) as client:
+            # Step 1: Share list
             r1 = await client.get(f"https://www.1024terabox.com/share/list?app_id=250528&shorturl={code}&root=1")
             data = r1.json()
             if data.get("errno") != 0:
-                return None, f"Cookie expired ya invalid! errno: {data.get('errno')}\nNaya cookies.txt upload kar."
+                return None, f"Cookie expired! errno: {data.get('errno', '???')}\nFresh cookies.txt upload kar."
 
             file = data["list"][0]
+
+            # Step 2: Download link
             payload = {
                 "shareid": data["shareid"],
                 "uk": data["uk"],
@@ -70,19 +74,23 @@ async def get_direct_link(link: str, cookies: dict):
         return None, f"Error: {str(e)}"
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("TeraBox Bot LIVE!\n\n1. cookies.txt upload kar (Netscape format)\n2. Link bhejo → direct + proxy milega!")
+    await update.message.reply_text(
+        "TeraBox Downloader Bot LIVE!\n\n"
+        "1. cookies.txt upload kar (Netscape format)\n"
+        "2. Link bhejo → direct + proxy milega full speed!"
+    )
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text.strip()
 
-    if re.search(r"1024terabox\.com/s/|terabox\.com/s/", text):
+    if re.search(r"terabox\.com/s/|1024terabox\.com/s/", text):
         if user_id not in user_cookies:
             user_links[user_id] = text
-            await update.message.reply_text("Link save kiya!\nAb cookies.txt upload kar do (document mein)")
+            await update.message.reply_text("Link save kiya!\nAb cookies.txt upload kar do (document)")
             return
 
-        msg = await update.message.reply_text("Processing...")
+        msg = await update.message.reply_text("Processing link...")
         info, err = await get_direct_link(text, user_cookies[user_id])
         if err:
             await msg.edit_text(err)
@@ -92,7 +100,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("Direct Link", url=info["dlink"])],
             [InlineKeyboardButton("Proxy Full Speed", url=info["proxy"])]
         ])
-        caption = f"**{info['name']}**\nSize: `{format_size(info['size'])}`\n\nDownload kar bhai!"
+        caption = f"**{info['name']}**\nSize: `{format_size(info['size'])}`\n\nDownload shuru kar bhai!"
 
         if info["thumb"]:
             await msg.delete()
@@ -100,31 +108,32 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await msg.edit_text(caption, reply_markup=keyboard, parse_mode="Markdown")
 
-async def handle_doc(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     doc = update.message.document
     if doc.file_name and doc.file_name.endswith(".txt"):
         file = await doc.get_file()
         content = await file.download_as_bytearray()
-        txt = content.decode()
+        txt = content.decode("utf-8", errors="ignore")
         parsed = parse_cookies_txt(txt)
         if "ndus" not in parsed:
-            await update.message.reply_text("Invalid cookies.txt! ndus missing")
+            await update.message.reply_text("Invalid cookies.txt! ndus missing hai")
             return
         user_cookies[user_id] = parsed
         await update.message.reply_text("Cookies save ho gaya! Ab link daal")
+        # Process saved link
         if user_id in user_links:
             link = user_links.pop(user_id)
-            fake_update = Update.de_json({"update_id": 999, "message": {"text": link, "chat": {"id": user_id}, "from_user": {"id": user_id}}}, bot_app.bot)
+            fake_update = Update(update_id=0, message=update.message.copy_update({"text": link}))
             await handle_text(fake_update, context)
 
 # Handlers
 bot_app.add_handler(CommandHandler("start", start))
 bot_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-bot_app.add_handler(MessageHandler(filters.Document.ALL, handle_doc))
+bot_app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
 
 @app.on_event("startup")
-async def start_bot():
+async def startup():
     await bot_app.initialize()
     await bot_app.start()
     await bot_app.updater.start_webhook(
@@ -152,4 +161,4 @@ async def proxy(url: str, name: str = "download"):
 
 @app.get("/")
 async def home():
-    return {"status": "TeraBox Bot LIVE – No requests, No lauda!"}
+    return {"status": "TeraBox Bot 100% LIVE – Vercel Ready – No requests!"}
