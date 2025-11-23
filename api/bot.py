@@ -9,7 +9,7 @@ TOKEN = "5793553240:AAGMn6pkK8SZurzXDuKsf-yygd43V8bt2fI"
 app = FastAPI()
 bot_app = Application.builder().token(TOKEN).build()
 
-# In-memory user storage (reset on restart)
+# In-memory data stores
 user_cookies = {}  # user_id → ndus cookie
 user_links = {}    # user_id → last shared link
 
