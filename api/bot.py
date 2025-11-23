@@ -10,8 +10,7 @@ TOKEN = os.getenv("BOT_TOKEN")
 bot = Bot(TOKEN)
 application = Application.builder().token(TOKEN).build()
 
-# Temporary user state (user_id → data)
-user_data = {}
+user_data = {}  # Stores user state
 
 def format_bytes(b):
     for unit in ['B', 'KB', 'MB', 'GB']:
@@ -21,19 +20,21 @@ def format_bytes(b):
 
 async def get_download_links(link: str, cookie: str):
     if not cookie.startswith("ndus="):
-        cookie = "ndus=" + cookie
+        cookie = "ndus=" + cookie.strip()
 
     match = re.search(r"/s/([a-zA-Z0-9]+)", link)
     if not match:
-        return None, "Invalid TeraBox link format!"
+        return None, "Invalid TeraBox link!"
 
     shortcode = match.group(1)
-    async with httpx.AsyncClient(timeout=30) as client:
+    async with httpx.AsyncClient(timeout=40) as client:
         try:
             # Step 1: Get file info
-            r1 = await client.post("https://www.1024terabox.com/share/list",
+            r1 = await client.post(
+                "https://www.1024terabox.com/share/list",
                 data={"shorturl": shortcode},
-                headers={"Cookie": cookie, "User-Agent": "Mozilla/5.0"})
+                headers={"Cookie": cookie, "User-Agent": "Mozilla/5.0"}
+            )
             data = r1.json()
             if data.get("errno") != 0:
                 return None, "Invalid or expired NDUS cookie!"
@@ -43,18 +44,18 @@ async def get_download_links(link: str, cookie: str):
             share_id = data["shareid"]
             uk = data["uk"]
 
-            # Step 2: Generate direct link
-            r2 = await client.post("https://www.1024terabox.com/api/download",
+            # Step 2: Get direct link
+            r2 = await client.post(
+                "https://www.1024terabox.com/api/download",
                 json={"shareid": share_id, "uk": uk, "fstype": "1", "fs_ids": [fs_id], "type": "nolimit"},
-                headers={"Cookie": cookie})
+                headers={"Cookie": cookie}
+            )
             res = r2.json()
             if res.get("errno") != 0:
-                return None, "Failed to generate download link."
+                return None, "Failed to generate link. Try again."
 
             dlink = res["dlink"][0]["dlink"]
-            base_url = os.getenv("VERCEL_URL", "https://teraaaaabot.vercel.app")
-            if not base_url.startswith("http"):
-                base_url = "https://" + base_url
+            base_url = f"https://{os.getenv('VERCEL_URL') or 'login12345bot.vercel.app'}"
             proxy_url = f"{base_url}/proxy?url={dlink}&name={file['server_filename']}"
 
             return {
@@ -67,53 +68,58 @@ async def get_download_links(link: str, cookie: str):
         except Exception as e:
             return None, f"Error: {str(e)}"
 
-# Handlers
+# /start command
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "TeraBox Downloader Bot\n\n"
         "Send me any TeraBox share link\n"
-        "I'll ask for your NDUS cookie (kept private)\n"
-        "Get unlimited direct + proxy download links!\n\n"
-        "Made with by @grok_xai",
+        "I'll ask for your NDUS cookie (100% private)\n"
+        "Get unlimited direct + proxy links instantly!\n\n"
+        "Bot: @login12345bot",
         reply_markup=InlineKeyboardMarkup([[
             InlineKeyboardButton("Source Code", url="https://github.com/YourUsername/teraaaaabot")
         ]])
     )
 
+# Handle all messages
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text.strip()
 
+    # User sent a TeraBox link
     if "terabox.com/s/" in text or "1024terabox.com/s/" in text:
         user_data[user_id] = {"link": text}
         await update.message.reply_text(
             "Link received!\n\n"
-            "Now reply with your **NDUS cookie** (only you see it):\n"
-            "→ Open terabox.com → F12 → Application → Cookies → copy value of **ndus**",
+            "Now reply with your **NDUS cookie**:\n"
+            "→ Login to terabox.com → F12 → Application → Cookies → copy **ndus** value",
             reply_to_message_id=update.message.message_id
         )
+
+    # User replied with cookie
     elif user_id in user_data and update.message.reply_to_message:
         cookie = text
         link = user_data[user_id]["link"]
         del user_data[user_id]
 
-        msg = await update.message.reply_text("Processing your link...")
+        msg = await update.message.reply_text("Processing your file... Please wait")
 
         result, error = await get_download_links(link, cookie)
         if error:
             await msg.edit_text(f"Error: {error}")
             return
 
-        caption = f"**{result['name']}**\nSize: `{result['size']}`\n\nChoose your link:"
+        caption = f"**{result['name']}**\nSize: `{result['size']}`\n\nChoose download method:"
         keyboard = [
             [InlineKeyboardButton("Direct Link", url=result["direct"])],
-            [InlineKeyboardButton("Proxy Link (Recommended)", url=result["proxy"])]
+            [InlineKeyboardButton("Proxy Link (Best & Fastest)", url=result["proxy"])]
         ]
 
         if result["thumb"]:
             await msg.delete()
             await update.message.reply_photo(
-                result["thumb"], caption=caption,
+                photo=result["thumb"],
+                caption=caption,
                 reply_markup=InlineKeyboardMarkup(keyboard),
                 parse_mode="Markdown"
             )
@@ -122,16 +128,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # Register handlers
 application.add_handler(CommandHandler("start", start))
-application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+application.add_handler(Messagehttps://github.com/YourUsername/teraaaaabotHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-# Webhook endpoint
+# Webhook route
 @app.post("/webhook")
 async def webhook(request: Request):
     update = Update.de_json(await request.json(), bot)
     await application.process_update(update)
     return {"ok": True}
 
-# Proxy download endpoint
+# Proxy download route
 @app.get("/proxy")
 async def proxy(url: str, name: str = "download.file"):
     async with httpx.AsyncClient(follow_redirects=True, timeout=None) as client:
@@ -143,4 +149,4 @@ async def proxy(url: str, name: str = "download.file"):
 
 @app.get("/")
 async def home():
-    return {"message": "TeraBox Bot is alive! @teraaaaabot"}
+    return {"message": "TeraBox Bot @login12345bot is running!"}
