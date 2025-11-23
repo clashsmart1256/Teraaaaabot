@@ -4,7 +4,9 @@ from fastapi import FastAPI, Request, Response
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
-# ←←← APNA TOKEN YAHAN HAI
+# ←←← TERA KEY DAAL DIYA HAI
+RAPIDAPI_KEY = "96d0825ba6msh411be1381868091p1465bejsn8dc0376ddd7c"
+
 TOKEN = "5793553240:AAGMn6pkK8SZurzXDuKsf-yygd43V8bt2fI"
 
 app = FastAPI()
@@ -16,85 +18,63 @@ def format_size(size):
         size /= 1024
     return f"{size:.1f} TB"
 
-# 100% WORKING WITHOUT COOKIE – NOV 2025
-async def get_file_info(link: str):
+async def get_terabox_link(link: str):
+    url = "https://terabox-downloader-direct-download-link-generator.p.rapidapi.com/api/v1/download"
+    headers = {
+        "X-RapidAPI-Key": RAPIDAPI_KEY,
+        "X-RapidAPI-Host": "terabox-downloader-direct-download-link-generator.p.rapidapi.com"
+    }
     try:
-        code = re.search(r"/s/([a-zA-Z0-9_-]+)", link).group(1)
-        api_url = f"https://terabox-dl.qtcloud.workers.dev/api/get-info?shorturl={code}&locale=en"
-        
-        async with httpx.AsyncClient(timeout=40) as client:
-            r = await client.get(api_url)
+        async with httpx.AsyncClient() as client:
+            r = await client.get(url, headers=headers, params={"url": link}, timeout=30)
             data = r.json()
-            
-            if data.get("ok"):
-                f = data["response"]
-                name = f["name"]
-                size = int(f["size"])
-                dlink = f["direct_link"]
-                thumb = f.get("thumb", "")
-                proxy = f"https://teraaaaabot.vercel.app/proxy?url={dlink}&name={name}"
-                
+            if data.get("success"):
+                f = data["data"]
                 return {
-                    "server_filename": name,
-                    "size": size,
-                    "dlink": dlink,
-                    "thumbs": {"url3": thumb} if thumb else {}
+                    "name": f["file_name"],
+                    "size": f["file_size"],
+                    "dlink": f["download_link"],
+                    "thumb": f.get("thumbnail", "")
                 }
-    except Exception as e:
-        print("API Error:", e)
+    except: pass
     return None
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "TeraBox Pro Bot LIVE\n\n"
-        "Bas koi bhi TeraBox/1024terabox link bhejo\n"
-        "2 second mein download link mil jayega\n\n"
-        "Cookie ki zaroorat nahi – 100% bina cookie!"
-    )
+    await update.message.reply_text("TeraBox Bot ON\nLink bhejo → 2 sec mein download ready!")
 
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
-    
     if not ("terabox.com/s/" in text or "1024terabox.com/s/" in text):
-        await update.message.reply_text("TeraBox link bhejo bhai")
+        await update.message.reply_text("Sirf TeraBox link bhejo bhai")
         return
-    
-    msg = await update.message.reply_text("Link check kar raha… 2 sec")
-    
-    file_info = await get_file_info(text)
-    
-    if not file_info:
-        await msg.edit_text("Link expired ya temporarily down hai\nThodi der baad try karo")
+
+    msg = await update.message.reply_text("Link check kar raha…")
+    info = await get_terabox_link(text)
+
+    if not info:
+        await msg.edit_text("Link expired ya temporarily down — thodi der baad try karo")
         return
-    
-    name = file_info["server_filename"]
-    size_str = format_size(file_info["size"])
-    dlink = file_info["dlink"]
-    thumb = file_info["thumbs"].get("url3", "")
-    proxy = f"https://teraaaaabot.vercel.app/proxy?url={dlink}&name={name}"
-    
+
+    proxy = f"https://teraaaaabot.vercel.app/proxy?url={info['dlink']}&name={info['name']}"
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("Direct Link", url=dlink)],
         [InlineKeyboardButton("Proxy Download (Full Speed)", url=proxy)]
     ])
-    
-    caption = f"**{name}**\nSize: `{size_str}`\n\nDownload shuru kar do!"
-    
-    if thumb:
+
+    caption = f"**{info['name']}**\nSize: `{info['size']}`\n\nDownload shuru kar do!"
+
+    if info['thumb']:
         await msg.delete()
-        await update.message.reply_photo(thumb, caption=caption, reply_markup=keyboard, parse_mode="Markdown")
+        await update.message.reply_photo(info['thumb'], caption=caption, reply_markup=keyboard, parse_mode="Markdown")
     else:
         await msg.edit_text(caption, reply_markup=keyboard, parse_mode="Markdown")
 
-# Bot init
 async def init_bot():
     if not bot_app.running:
         await bot_app.initialize()
         await bot_app.start()
 
-# Handlers
 bot_app.add_handler(CommandHandler("start", start))
-bot_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+bot_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
 
 @app.post("/webhook")
 async def webhook(request: Request):
@@ -104,15 +84,12 @@ async def webhook(request: Request):
     return Response(status_code=200)
 
 @app.get("/proxy")
-async def proxy(url: str, name: str = "download"):
+async def proxy(url: str, name: str = "file"):
     async with httpx.AsyncClient(follow_redirects=True, timeout=None) as client:
         r = await client.get(url)
-        return Response(
-            content=r.content,
-            media_type="application/octet-stream",
-            headers={"Content-Disposition": f'attachment; filename="{name}"'}
-        )
+        return Response(content=r.content, media_type="application/octet-stream",
+                        headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 @app.get("/")
 async def home():
-    return {"status": "TeraBox Bot – Zero Cookie Needed!"}
+    return {"status": "Bot Live with RapidAPI"}
