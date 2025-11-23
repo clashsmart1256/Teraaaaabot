@@ -1,36 +1,32 @@
 import os
-import json
 from fastapi import FastAPI, Request, Response
-from telegram import Update, Bot
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram import Update
+from telegram.ext import Application, CommandHandler, ContextTypes
 
 app = FastAPI()
-TOKEN = os.getenv("BOT_TOKEN")  # Uses Vercel env var
-bot = Bot(token=TOKEN)
-application = Application.builder().token(TOKEN).build()
+
+# ←←← PUT YOUR TOKEN HERE FOR 100 % SURE IT WORKS (remove again later)
+TOKEN = "5793553240:AAGMn6pkK8SZurzXDuKsf-yygd43V8bt2fI"
+
+application = Application.builder().token(TOKEN).concurrent_updates(True).build()
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("✅ Bot is alive! Webhook working. Send any text to echo.")
+    await update.message.reply_text("IT WORKS! Bot is finally alive!")
 
-async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(f"You said: {update.message.text}")
-
-# Add handlers
 application.add_handler(CommandHandler("start", start))
-application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, echo))
 
 @app.post("/webhook")
 async def webhook(request: Request):
     try:
-        json_data = await request.json()
-        print(f"Received update: {json_data.get('update_id', 'unknown')}")  # Logs to Vercel
-        update = Update.de_json(json_data, bot)
+        data = await request.json()
+        print("RECEIVED:", data)                 # ← This line will appear in Vercel logs
+        update = Update.de_json(data, application.bot)
         await application.process_update(update)
-        return {"ok": True}
+        print("PROCESSED update_id:", update.update_id)
     except Exception as e:
-        print(f"Error in webhook: {e}")  # Logs to Vercel for debugging
-        return Response(status_code=200, content="OK")  # Always return 200 to avoid Telegram retries
+        print("ERROR:", str(e))
+    return Response(content="OK", status_code=200)
 
 @app.get("/")
-async def home():
-    return {"status": "Echo bot ready – test /start!"}
+async def root():
+    return {"status": "Bot is running"}
