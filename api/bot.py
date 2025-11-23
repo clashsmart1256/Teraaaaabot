@@ -9,95 +9,137 @@ TOKEN = "5793553240:AAGMn6pkK8SZurzXDuKsf-yygd43V8bt2fI"
 app = FastAPI()
 bot_app = Application.builder().token(TOKEN).build()
 
-# User cookies save karne ke liye (in-memory, restart pe reset)
-user_cookies = {}  # user_id → ndus cookie
+# ये दो dict जरूरी हैं — मैं भूल गया था define करना!
+user_links = {}   # user_id → link (जब तक cookie न आए)
+user_cookies = {} # user_id → ndus cookie (permanent save)
 
 def format_size(size):
     for unit in ["B", "KB", "MB", "GB"]:
-        if size < 1024: return f"{size:.1f} {unit}"
+        if size < 1024:
+            return f"{size:.1f} {unit}"
         size /= 1024
-    return f"{size:.1f} GB"
+    return f"{size:.1f} TB"
 
-async def get_direct_link(link: str, cookie=None):
-    if cookie is None or not cookie.startswith("ndus="):
-        cookie = "ndus=" + cookie.strip() if cookie else ""
-    code = re.search(r"/s/([a-zA-Z0-9_-]+)", link).group(1)
-    headers = {"Cookie": cookie, "User-Agent": "Mozilla/5.0"}
+# TeraBox से direct link निकालने वाला फंक्शन (cookie के साथ)
+async def get_direct_link(link: str, cookie: str):
     try:
-        async with httpx.AsyncClient(headers=headers, timeout=30) as client:
-            r = await client.post("https://www.1024terabox.com/share/list", data={"shorturl": code})
-            data = r.json()
+        code = re.search(r"/s/([a-zA-Z0-9_-]+)", link).group(1)
+        headers = {"Cookie": cookie, "User-Agent": "Mozilla/5.0"}
+        async with httpx.AsyncClient(headers=headers, timeout=40) as client:
+            # Step 1: Share list
+            r1 = await client.get(f"https://www.terabox.com/share/list?app_id=250528&shorturl={code}")
+            data = r1.json()
             if data.get("errno") != 0:
-                return None, "Cookie galat ya expired — fresh cookie daal do"
+                return None, "Cookie expired ya galat hai"
             file = data["list"][0]
-            r2 = await client.post("https://www.1024terabox.com/api/download", json={
+
+            # Step 2: Direct download link
+            payload = {
                 "shareid": data["shareid"],
                 "uk": data["uk"],
-                "fstype": "1",
-                "fs_ids": [file["fs_id"]],
-                "type": "nolimit"
-            })
+                "primaryid": data["shareid"],
+                "fid_list": [file["fs_id"]]
+            }
+            r2 = await client.post("https://www.terabox.com/api/download", json=payload)
             res = r2.json()
             if res.get("errno") != 0:
-                return None, "Download generate nahi hua"
+                return None, "Download link generate nahi hua"
+            
             dlink = res["dlink"][0]["dlink"]
-            proxy = f"https://teraaaaabot.vercel.app/proxy?url={dlink}&name={file['server_filename']}"
+            name = file["server_filename"]
+            size = int(file["size"])
+            thumb = file.get("thumbs", {}).get("url3", "")
+            proxy = f"https://teraaaaabot.vercel.app/proxy?url={dlink}&name={name}"
+            
             return {
-                "server_filename": file["server_filename"],
-                "size": int(file["size"]),
+                "name": name,
+                "size": size,
                 "dlink": dlink,
-                "thumbs": {"url3": file.get("thumbs", {}).get("url3", "")}
+                "thumb": thumb,
+                "proxy": proxy
             }, None
     except Exception as e:
         return None, f"Error: {str(e)}"
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "TeraBox Bot LIVE (Cookie Save Mode)\n\n"
-        "Link bhejo → pehli baar cookie maangega (ek baar daal, hamesha kaam)\n"
-        "Aage se automatic!\n\n"
-        "Cookie kaise nikale: terabox.com login → F12 → Application → Cookies → ndus copy"
+        "TeraBox Downloader Bot LIVE\n\n"
+        "1. TeraBox link bhejo\n"
+        "2. ndus= cookie bhejo (ek baar)\n"
+        "3. Download link mil jayega!\n\n"
+        "Cookie kaise nikale? → terabox.com login → F12 → Application → Cookies → ndus= copy"
     )
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text.strip()
 
-    if "terabox.com/s/" in text or "1024terabox.com/s/" in text or "teraboxshare.com/s/" in text:
+    # अगर लिंक है
+    if re.search(r"terabox\.com/s/|1024terabox\.com/s/|teraboxshare\.com/s/", text):
         user_links[user_id] = text
-        await update.message.reply_text("Link saved!\n\nPehli baar ndus= cookie bhejo (ek baar daal, save ho jayega):\n• terabox.com login → F12 → Application → Cookies → ndus copy")
+        await update.message.reply_text(
+            "Link save kar liya!\n\n"
+            "Ab ndus= cookie bhejo (jaise: ndus=AAHBc8dEfG...)\n"
+            "Ek baar daalne ke baad hamesha kaam karega!"
+        )
         return
 
+    # अगर cookie भेजा है (पहले लिंक भेजा था)
     if user_id in user_links:
-        link = user_links[user_id]
-        cookie = text
-        # Save cookie for this user
+        link = user_links.pop(user_id)  # लिंक निकाल लिया
+        cookie = text.strip()
+        if not cookie.startswith("ndus="):
+            cookie = "ndus=" + cookie
+
+        # Cookie save कर लिया user के लिए
         user_cookies[user_id] = cookie
-        msg = await update.message.reply_text("Cookie saved! Ab se automatic chalega… Processing link")
+
+        msg = await update.message.reply_text("Cookie save kiya! Ab link process kar raha…")
+
         info, err = await get_direct_link(link, cookie)
         if err:
-            await msg.edit_text(f"{err}")
+            await msg.edit_text(f"Error: {err}\n\nFresh cookie daal do")
             return
-        name = info["server_filename"]
-        size_str = format_size(info["size"])
-        dlink = info["dlink"]
-        thumb = info["thumbs"].get("url3", "")
-        proxy = f"https://teraaaaabot.vercel.app/proxy?url={dlink}&name={name}"
+
         keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("Direct Link", url=dlink)],
-            [InlineKeyboardButton("Proxy (Full Speed)", url=proxy)]
+            [InlineKeyboardButton("Direct Link", url=info["dlink"])],
+            [InlineKeyboardButton("Proxy Download (Full Speed)", url=info["proxy"])]
         ])
-        caption = f"**{name}**\nSize: `{size_str}`\n\nDownload ready! (Cookie saved for future)"
-        if thumb:
+
+        caption = f"**{info['name']}**\nSize: `{format_size(info['size'])}`\n\nDownload ready bhai!"
+
+        if info["thumb"]:
             await msg.delete()
-            await update.message.reply_photo(thumb, caption=caption, reply_markup=keyboard, parse_mode="Markdown")
+            await update.message.reply_photo(info["thumb"], caption=caption, reply_markup=keyboard, parse_mode="Markdown")
         else:
             await msg.edit_text(caption, reply_markup=keyboard, parse_mode="Markdown")
-        del user_links[user_id]  # Clean up
         return
 
-    await update.message.reply_text("Pehle link bhejo, phir cookie")
+    # अगर पहले से cookie save है तो direct process करो
+    if user_id in user_cookies and re.search(r"terabox\.com/s/|1024terabox\.com/s/|teraboxshare\.com/s/", text):
+        msg = await update.message.reply_text("Cookie pehle se hai! Process kar raha…")
+        info, err = await get_direct_link(text, user_cookies[user_id])
+        if err:
+            await msg.edit_text(f"Cookie expired ho gaya: {err}\n\nNaya cookie bhejo")
+            return
 
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("Direct Link", url=info["dlink"])],
+            [InlineKeyboardButton("Proxy Download", url=info["proxy"])]
+        ])
+
+        caption = f"**{info['name']}**\nSize: `{format_size(info['size'])}`\n\nDownload shuru kar do!"
+
+        if info["thumb"]:
+            await msg.delete()
+            await update.message.reply_photo(info["thumb"], caption=caption, reply_markup=keyboard, parse_mode="Markdown")
+        else:
+            await msg.edit_text(caption, reply_markup=keyboard, parse_mode="Markdown")
+        return
+
+    await update.message.reply_text("Pehle TeraBox link bhejo!")
+
+# Bot init
 async def init_bot():
     if not bot_app.running:
         await bot_app.initialize()
@@ -125,4 +167,4 @@ async def proxy(url: str, name: str = "download"):
 
 @app.get("/")
 async def home():
-    return {"status": "TeraBox Bot – Cookie Save Mode (100% Working!)"}
+    return {"status": "TeraBox Bot 100% Working with Cookie Save"}
