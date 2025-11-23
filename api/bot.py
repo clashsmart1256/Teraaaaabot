@@ -4,7 +4,7 @@ from fastapi import FastAPI, Request, Response
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
-# ←←← TERA KEY DAAL DIYA HAI
+# ←←← TERA KEY DAAL DIYA HAI (96d0825ba6msh411be1381868091p1465bejsn8dc0376ddd7c)
 RAPIDAPI_KEY = "96d0825ba6msh411be1381868091p1465bejsn8dc0376ddd7c"
 
 TOKEN = "5793553240:AAGMn6pkK8SZurzXDuKsf-yygd43V8bt2fI"
@@ -16,17 +16,18 @@ def format_size(size):
     for unit in ["B", "KB", "MB", "GB"]:
         if size < 1024: return f"{size:.1f} {unit}"
         size /= 1024
-    return f"{size:.1f} TB"
+    return f"{size:.1f} GB"
 
 async def get_terabox_link(link: str):
-    url = "https://terabox-downloader-direct-download-link-generator.p.rapidapi.com/api/v1/download"
+    # Updated endpoint from search (2025 fix)
+    url = "https://terabox-downloader-direct-download-link-generator.p.rapidapi.com/download"
     headers = {
         "X-RapidAPI-Key": RAPIDAPI_KEY,
         "X-RapidAPI-Host": "terabox-downloader-direct-download-link-generator.p.rapidapi.com"
     }
     try:
-        async with httpx.AsyncClient() as client:
-            r = await client.get(url, headers=headers, params={"url": link}, timeout=30)
+        async with httpx.AsyncClient(timeout=30) as client:
+            r = await client.get(url, headers=headers, params={"url": link})
             data = r.json()
             if data.get("success"):
                 f = data["data"]
@@ -36,11 +37,18 @@ async def get_terabox_link(link: str):
                     "dlink": f["download_link"],
                     "thumb": f.get("thumbnail", "")
                 }
-    except: pass
+            else:
+                print("API Response:", data)  # Logs for debug
+    except Exception as e:
+        print("RapidAPI Error:", e)
     return None
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("TeraBox Bot ON\nLink bhejo → 2 sec mein download ready!")
+    await update.message.reply_text(
+        "TeraBox Bot ON (RapidAPI Fixed)\n\n"
+        "Link bhejo → 2 sec mein download ready!\n\n"
+        "Test: https://1024terabox.com/s/1pgI7vD798tb4mn7Lvqx_TQ"
+    )
 
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
@@ -49,10 +57,11 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     msg = await update.message.reply_text("Link check kar raha…")
+
     info = await get_terabox_link(text)
 
     if not info:
-        await msg.edit_text("Link expired ya temporarily down — thodi der baad try karo")
+        await msg.edit_text("Link expired ya API mein issue — thodi der baad try karo")
         return
 
     proxy = f"https://teraaaaabot.vercel.app/proxy?url={info['dlink']}&name={info['name']}"
@@ -92,4 +101,4 @@ async def proxy(url: str, name: str = "file"):
 
 @app.get("/")
 async def home():
-    return {"status": "Bot Live with RapidAPI"}
+    return {"status": "Bot Live with RapidAPI Fixed"}
